@@ -14,10 +14,11 @@ class DatabaseManager:
     def fetch_region_hierarchy(self):
         """地域階層情報をデータベースから取得"""
         centers = {}
-        self.cursor.execute("SELECT * FROM areas")
+        self.cursor.execute("SELECT centers_name, centers_id, offices_name, offices_id, class10s_name, class10s_id FROM areas")
         rows = self.cursor.fetchall()
         for row in rows:
-            _, center_name, center_id, office_name, office_id, class10_name, class10_id = row
+            center_name, center_id, office_name, office_id, class10_name, class10_id = row
+
             if center_id not in centers:
                 centers[center_id] = {"name": center_name, "children": {}}
             if office_id not in centers[center_id]["children"]:
@@ -28,6 +29,7 @@ class DatabaseManager:
 
     def close(self):
         self.connection.close()
+
 
 # 天気データを取得する関数
 def fetch_weather_data(region_id):
@@ -115,13 +117,18 @@ def main(page: ft.Page):
             )
         )
 
-    # ページにレイアウトを追加
+    # サイドバーを上部固定にするためのレイアウト
     page.add(
-        ft.Row(
+        ft.Column(
             [
                 ft.Container(
-                    content=ft.Column(expansion_tiles, expand=True),
+                    content=ft.Column(
+                        expansion_tiles,
+                        expand=True,
+                    ),
                     width=300,
+                    height=600,
+                    alignment=ft.alignment.top_left,
                     expand=False,
                 ),
                 ft.VerticalDivider(width=1),
@@ -134,6 +141,7 @@ def main(page: ft.Page):
             expand=True,
         )
     )
+
 
 # 天気情報の抽出関数
 def extract_detailed_weather(weather_data):

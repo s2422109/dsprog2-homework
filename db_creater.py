@@ -3,11 +3,12 @@ import requests
 
 # 地域データ管理クラス
 class RegionDataManager:
-    DB_PATH = "region_data.db"
+
     AREA_JSON_URL = "http://www.jma.go.jp/bosai/common/const/area.json"
 
-    def __init__(self):
-        self.connection = sqlite3.connect(self.DB_PATH)
+    def __init__(self,database_name):
+        self.database_name = database_name
+        self.connection = sqlite3.connect(database_name)
         self.cursor = self.connection.cursor()
         self.initialize_database()
 
@@ -102,11 +103,10 @@ class RegionDataManager:
         self.connection.close()
 
 class WeatherDataManager:
-    DB_NAME = 'weather_data.db'
-    AREA_URL = "http://www.jma.go.jp/bosai/forecast/data/forecast/{}.json"  # URL with dynamic area ID
-
-    def __init__(self):
-        self.connection = sqlite3.connect(self.DB_NAME)
+    AREA_URL = "http://www.jma.go.jp/bosai/forecast/data/forecast/{}.json"
+    def __init__(self,database_name):
+        self.database_name = database_name
+        self.connection = sqlite3.connect(database_name)
         self.cursor = self.connection.cursor()
 
     def create_table(self, table_name, columns):
@@ -235,10 +235,212 @@ class WeatherDataManager:
         """データベース接続を閉じる"""
         self.connection.close()
 
+
+class WeatherDataFetcher:
+    AREA_URL = "http://www.jma.go.jp/bosai/forecast/data/forecast/{}.json"
+
+    def __init__(self, database_name):
+        self.database_name = database_name
+        self.setup_database()
+
+    # SQLiteデータベースをセットアップ
+    def setup_database(self):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+        
+        # weather_tt テーブルの作成
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS weather_tt (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                offices_code TEXT,
+                publishing_office TEXT,
+                report_datetime TEXT,
+                area_name TEXT,
+                time_define TEXT,
+                temps_min TEXT,
+                temps_min_upper TEXT,
+                temps_min_lower TEXT,
+                temps_max TEXT,
+                temps_max_upper TEXT,
+                temps_max_lower TEXT
+            )
+        """)
+        
+        # weather_temp_ave テーブルの作成
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS weather_temp_ave (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                offices_code TEXT,
+                publishing_office TEXT,
+                report_datetime TEXT,
+                area_name TEXT,
+                temps_ave_min TEXT,
+                temps_ave_max TEXT
+            )
+        """)
+        
+        # weather_pop_ave テーブルの作成
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS weather_pop_ave (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                offices_code TEXT,
+                publishing_office TEXT,
+                report_datetime TEXT,
+                area_name TEXT,
+                temps_pop_min TEXT,
+                temps_pop_max TEXT
+            )
+        """)
+        
+        conn.commit()
+        conn.close()
+
+    def save_weather_data(self, table_name, data):
+        conn = sqlite3.connect(self.database_name)
+        cursor = conn.cursor()
+
+        # テーブルの列名を取得する
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns_info = cursor.fetchall()
+        column_names = [col[1] for col in columns_info]  # 列名のリストを作成
+        
+        # データの長さが列数と一致していることを確認
+        for row in data:
+            if len(row) != len(column_names) - 1:  # id列は除外するため -1
+                print(f"[ERROR] データの長さが列数と一致しません: {len(row)} != {len(column_names) - 1}")
+                return
+
+        # 挿入するためのプレースホルダーを作成
+        placeholders = ", ".join(["?" for _ in range(len(column_names) - 1)])  # id列を除く
+        sql = f"INSERT INTO {table_name} ({', '.join(column_names[1:])}) VALUES ({placeholders})"  # id列を除く
+
+        # データの挿入
+        cursor.executemany(sql, data)
+        conn.commit()
+        conn.close()
+
+
+    # 天気データを取得する関数
+    def fetch_weather_data(self, office_code):
+        """天気データを取得"""
+        url = self.AREA_URL.format(office_code)
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                print(f"[SUCCESS] 天気データ取得成功")
+                return response.json()
+            else:
+                print(f"[ERROR] 天気データ取得失敗: ステータスコード {response.status_code}")
+                return None
+        except Exception as e:
+            print(f"[EXCEPTION] 天気データ取得中にエラー発生: {e}")
+            return None
+
+    # メイン処理
+    def process_weather_data(self):
+        if weather_data and isinstance(weather_data, list) and len(weather_data) > 1:
+            print(f"[INFO] 'weather_data'の処理を開始します。")
+            second_entry = weather_data[1]
+
+            # 発表局と発表日時
+            publishing_office = second_entry.get("publishingOffice", "不明")
+            report_datetime = second_entry.get("reportDatetime", "不明")
+            time_series = second_entry.get("timeSeries", [])
+            temp_average = second_entry.get("tempAverage", {})
+            precip_average = second_entry.get("precipAverage", {})
+
+            weather_tt_data = []
+            weather_temp_ave_data = []
+            weather_pop_ave_data = []
+
+            # timeSeriesの処理
+            for series in time_series:
+                time_defines = series.get("timeDefines", [])
+                areas = series.get("areas", [])
+
+                for area in areas:
+                    area_name = area.get("area", {}).get("name", "不明")
+                    area_code = area.get("area", {}).get("code", "不明")
+
+                    temps_min = area.get("tempsMin", [])
+                    temps_min_upper = area.get("tempsMinUpper", [])
+                    temps_min_lower = area.get("tempsMinLower", [])
+                    temps_max = area.get("tempsMax", [])
+                    temps_max_upper = area.get("tempsMaxUpper", [])
+                    temps_max_lower = area.get("tempsMaxLower", [])
+
+                    for idx, time_define in enumerate(time_defines):
+                        # 「情報なし」が含まれている場合は追加しない
+                        if any(val == "情報なし" for val in [
+                            temps_min[idx] if idx < len(temps_min) else "情報なし",
+                            temps_min_upper[idx] if idx < len(temps_min_upper) else "情報なし",
+                            temps_min_lower[idx] if idx < len(temps_min_lower) else "情報なし",
+                            temps_max[idx] if idx < len(temps_max) else "情報なし",
+                            temps_max_upper[idx] if idx < len(temps_max_upper) else "情報なし",
+                            temps_max_lower[idx] if idx < len(temps_max_lower) else "情報なし"
+                        ]):
+                            continue  # 情報なしが含まれていればこのデータはスキップ
+
+                        weather_tt_data.append((
+                            area_code, publishing_office, report_datetime,
+                            area_name, time_define,
+                            temps_min[idx] if idx < len(temps_min) else "情報なし",
+                            temps_min_upper[idx] if idx < len(temps_min_upper) else "情報なし",
+                            temps_min_lower[idx] if idx < len(temps_min_lower) else "情報なし",
+                            temps_max[idx] if idx < len(temps_max) else "情報なし",
+                            temps_max_upper[idx] if idx < len(temps_max_upper) else "情報なし",
+                            temps_max_lower[idx] if idx < len(temps_max_lower) else "情報なし"
+                        ))
+
+            # tempAverageの処理
+            for area in temp_average.get("areas", []):
+                area_name = area.get("area", {}).get("name", "不明")
+                area_code = area.get("area", {}).get("code", "不明")
+                min_temp = area.get("min", "情報なし")
+                max_temp = area.get("max", "情報なし")
+
+                if min_temp != "情報なし" and max_temp != "情報なし":  # 「情報なし」含まれていない場合のみ追加
+                    weather_temp_ave_data.append((
+                        area_code, publishing_office, report_datetime,
+                        area_name,   # time_defineは不明
+                        min_temp,
+                        max_temp
+                    ))
+
+            # precipAverageの処理
+            for area in precip_average.get("areas", []):
+                area_name = area.get("area", {}).get("name", "不明")
+                area_code = area.get("area", {}).get("code", "不明")
+                min_precip = area.get("min", "情報なし")
+                max_precip = area.get("max", "情報なし")
+
+                if min_precip != "情報なし" and max_precip != "情報なし":  # 「情報なし」含まれていない場合のみ追加
+                    weather_pop_ave_data.append((
+                        area_code, publishing_office, report_datetime,
+                        area_name,   # time_defineは不明
+                        min_precip,
+                        max_precip
+                    ))
+
+            # データベースに保存
+            if weather_tt_data:
+                self.save_weather_data("weather_tt", weather_tt_data)
+            if weather_temp_ave_data:
+                self.save_weather_data("weather_temp_ave", weather_temp_ave_data)
+            if weather_pop_ave_data:
+                self.save_weather_data("weather_pop_ave", weather_pop_ave_data)
+
+            print("[INFO] 有効な天気データがデータベースに保存されました。")
+        else:
+            print("[ERROR] 天気データの取得に失敗しました。")
+
+
+
 # 実行部分
 if __name__ == "__main__":
     # 地域データを管理
-    region_manager = RegionDataManager()
+    DB_PATH = "region_data.db"
+    region_manager = RegionDataManager(DB_PATH)
     print("[INFO] 地域データを取得中...")
     region_data = region_manager.fetch_region_data()
 
@@ -259,10 +461,8 @@ if __name__ == "__main__":
 
     print(f"[INFO] オフィスコードリスト: {offices}")
 
-    region_manager.close_connection()
-
     # 天気データを管理
-    weather_manager = WeatherDataManager()
+    weather_manager = WeatherDataManager(DB_PATH)
     table_structure = {
         "weather_info": [
             ("offices_code", "TEXT"),
@@ -325,7 +525,18 @@ if __name__ == "__main__":
                 print(f"[SUCCESS] {office} のデータを {table_name} に保存しました。")
             else:
                 print(f"[ERROR] {office} の天気データの取得に失敗しました。")
-
+    
+    # WeatherDataFetcherインスタンスを作成して実行
+    weather_fetcher = WeatherDataFetcher(DB_PATH)
+    for office in offices:
+        print(f"[INFO] {office} の天気データを取得中...")
+        weather_data = weather_fetcher.fetch_weather_data(office)  # officeを引数として渡す
+        if weather_data:
+            weather_fetcher.process_weather_data()  # weather_dataを引数として渡す
+            print(f"[SUCCESS] {office} のデータを取得しました。")
+        else:
+            print(f"[ERROR] {office} の天気データの取得に失敗しました。")
+    
 
 
     weather_manager.close_connection()
