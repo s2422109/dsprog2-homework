@@ -197,7 +197,7 @@ class WeatherDataManager:
                         reliability = reliabilities[idx]  # `reliabilities`も収集
 
                         # `weather`と`wind`が必要な場合にのみ保存
-                        if (need == "weather" and weather is not None) or (need == "wind" and wind is not None) or (need == "pop" and pop is not None) or (need == "temp" and temp is not None) or (need == "reliabilities" and reliability is not None):
+                        if (need == "weather" and weather is not None) or (need == "wind" and wind is not None) or (need == "pop" and pop is not None and reliability is None) or (need == "temp" and temp is not None) or (need == "reliabilities" and reliability is not None):
                             # レコードの作成
                             weather_data.append({
                                 "offices_code": offices_code,
@@ -337,7 +337,7 @@ class WeatherDataFetcher:
             return None
 
     # メイン処理
-    def process_weather_data(self):
+    def process_weather_data(self, weather_data):
         if weather_data and isinstance(weather_data, list) and len(weather_data) > 1:
             print(f"[INFO] 'weather_data'の処理を開始します。")
             second_entry = weather_data[1]
@@ -436,107 +436,4 @@ class WeatherDataFetcher:
 
 
 
-# 実行部分
-if __name__ == "__main__":
-    # 地域データを管理
-    DB_PATH = "region_data.db"
-    region_manager = RegionDataManager(DB_PATH)
-    print("[INFO] 地域データを取得中...")
-    region_data = region_manager.fetch_region_data()
 
-    if region_data:
-        print("[INFO] データをデータベースに保存中...")
-        region_manager.save_to_database(region_data)
-        print("[SUCCESS] 地域データの保存が完了しました。")
-
-    # 全オフィスのIDをリストに格納
-    offices = []
-    centers = region_data.get("centers", {})
-    offices_data = region_data.get("offices", {})
-
-    # 各センター内のオフィスIDを収集
-    for center_info in centers.values():
-        children_offices = center_info.get("children", [])
-        offices.extend(children_offices)
-
-    print(f"[INFO] オフィスコードリスト: {offices}")
-
-    # 天気データを管理
-    weather_manager = WeatherDataManager(DB_PATH)
-    table_structure = {
-        "weather_info": [
-            ("offices_code", "TEXT"),
-            ("publishing_office", "TEXT"),
-            ("report_datetime", "TEXT"),
-            ("area_name", "TEXT"),
-            ("time_define", "TEXT"),
-            ("weather_code", "TEXT"),
-            ("weather", "TEXT"),
-            ("wind", "TEXT"),
-            ("wave", "TEXT")
-        ],
-        "weather_pops": [
-            ("offices_code", "TEXT"),
-            ("publishing_office", "TEXT"),
-            ("report_datetime", "TEXT"),
-            ("area_name", "TEXT"),
-            ("time_define", "TEXT"),
-            ("pop", "TEXT")
-        ],
-        "weather_temps": [
-            ("offices_code", "TEXT"),
-            ("publishing_office", "TEXT"),
-            ("report_datetime", "TEXT"),
-            ("area_name", "TEXT"),
-            ("time_define", "TEXT"),
-            ("temp", "TEXT")
-        ],
-        "weather_reliabilities": [
-            ("offices_code", "TEXT"),
-            ("publishing_office", "TEXT"),
-            ("report_datetime", "TEXT"),
-            ("area_name", "TEXT"),
-            ("time_define", "TEXT"),
-            ("weather_code", "TEXT"),
-            ("pop", "TEXT"),
-            ("reliabilities", "TEXT")
-        ]
-    }
-    print("[INFO] 天気データを取得中...")
-    for table_name, columns in table_structure.items():  # 正しく2つにアンパック
-        print(f"[INFO] テーブル {table_name} を作成中...")
-        print(f"[INFO] カラム: {columns}")
-        weather_manager.create_table(table_name, columns)
-        for office in offices:
-            print(f"[INFO] {office} の天気データを取得中...")
-            weather_data = weather_manager.fetch_weather_data(office)
-            if weather_data:
-                # 必要なカラムを決定（例: テーブルごとの必要なデータをマッピング）
-                if table_name == "weather_info":
-                    need = "weather"
-                elif table_name == "weather_pops":
-                    need = "pop"
-                elif table_name == "weather_temps":
-                    need = "temp"
-                elif table_name == "weather_reliabilities":
-                    need = "reliabilities"
-
-                weather_manager.save_weather_to_db(table_name, columns, weather_data, need)
-                print(f"[SUCCESS] {office} のデータを {table_name} に保存しました。")
-            else:
-                print(f"[ERROR] {office} の天気データの取得に失敗しました。")
-    
-    # WeatherDataFetcherインスタンスを作成して実行
-    weather_fetcher = WeatherDataFetcher(DB_PATH)
-    for office in offices:
-        print(f"[INFO] {office} の天気データを取得中...")
-        weather_data = weather_fetcher.fetch_weather_data(office)  # officeを引数として渡す
-        if weather_data:
-            weather_fetcher.process_weather_data()  # weather_dataを引数として渡す
-            print(f"[SUCCESS] {office} のデータを取得しました。")
-        else:
-            print(f"[ERROR] {office} の天気データの取得に失敗しました。")
-    
-
-
-    weather_manager.close_connection()
